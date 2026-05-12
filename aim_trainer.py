@@ -41,6 +41,12 @@ SPD_MAX   = 280.0
 
 SCORES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "highscores.json")
 
+HP_OPTIONS  = [50, 100, 200, 300, 500]
+HP_LABELS   = ["50", "100", "200", "300", "500"]
+
+SPD_OPTIONS = [80, 150, 220, 300]
+SPD_LABELS  = ["Slow", "Med", "Fast", "Max"]
+
 
 # ── tiny data classes ──────────────────────────────────────────────────────────
 class Button:
@@ -157,6 +163,16 @@ class AimTrainer(QWidget):
         self._on  = False
         self._mouse_held = False   # must hold LMB to deal damage in tracking
 
+        # tracking settings (persist between rounds — only set once in _init_vars)
+        if not hasattr(self, 'track_hp_idx'):
+            self.track_hp_idx     = 1      # default 100 HP
+            self.track_spd_idx    = 1      # default Med (150 px/s)
+            self.track_random_spd = False
+
+        # per-round tracking state
+        self._track_max_hp = float(HP_OPTIONS[self.track_hp_idx])
+        self._spd_timer    = 0.0
+
         # visual
         self._rings:  list = []
         self._breaks: list = []
@@ -221,11 +237,26 @@ class AimTrainer(QWidget):
             self._tvy = -self._tvy
             self._tvx += random.uniform(-20, 20)
 
-        spd = math.hypot(self._tvx, self._tvy)
-        if spd > SPD_MAX:
-            f = SPD_MAX / spd;  self._tvx *= f;  self._tvy *= f
-        elif spd < SPD_MIN:
-            f = SPD_MIN / spd;  self._tvx *= f;  self._tvy *= f
+        if self.track_random_spd:
+            # periodically snap to a new random speed between 35-100% of selected max
+            self._spd_timer -= dt
+            if self._spd_timer <= 0:
+                self._spd_timer = random.uniform(0.6, 2.2)
+                top = float(SPD_OPTIONS[self.track_spd_idx])
+                new_spd = random.uniform(top * 0.35, top)
+                spd = math.hypot(self._tvx, self._tvy)
+                if spd > 1:
+                    f = new_spd / spd
+                    self._tvx *= f
+                    self._tvy *= f
+        else:
+            # hold exactly at the selected constant speed
+            target = float(SPD_OPTIONS[self.track_spd_idx])
+            spd = math.hypot(self._tvx, self._tvy)
+            if spd > 1:
+                f = target / spd
+                self._tvx *= f
+                self._tvy *= f
 
         dist     = math.hypot(self._mx - self._tx, self._my - self._ty)
         self._on = dist < TRACK_R
@@ -237,7 +268,7 @@ class AimTrainer(QWidget):
                 self.time_on_tgt += dt
                 self._hp -= DRAIN_PS * dt
                 if self._hp <= 0:
-                    self._hp = MAX_HP
+                    self._hp = self._track_max_hp
                     self.score += 1
                     self._rings.append(HitRing(self._tx, self._ty, TRACK_R))
                     mg2 = TRACK_R * 3
@@ -265,11 +296,16 @@ class AimTrainer(QWidget):
             self._build_grid()
         else:
             mg = TRACK_R * 3
-            self._tx  = random.uniform(mg, w - mg)
-            self._ty  = random.uniform(mg, h - mg)
-            self._tvx = random.choice([-1, 1]) * 160.0
-            self._tvy = random.choice([-1, 1]) * 130.0
-            self._hp  = MAX_HP
+            self._tx = random.uniform(mg, w - mg)
+            self._ty = random.uniform(mg, h - mg)
+            # initialise speed from settings
+            self._track_max_hp = float(HP_OPTIONS[self.track_hp_idx])
+            self._spd_timer    = 0.0
+            spd   = float(SPD_OPTIONS[self.track_spd_idx])
+            angle = random.uniform(0, math.pi * 2)
+            self._tvx = math.cos(angle) * spd
+            self._tvy = math.sin(angle) * spd
+            self._hp  = self._track_max_hp
             self._on  = False
 
         self.state = "playing"
@@ -325,18 +361,58 @@ class AimTrainer(QWidget):
 
     def _layout_menu(self):
         cx, cy = self.width() / 2, self.height() / 2
+        track = (self.mode == "tracking")
+
+        # button y-centres — two layouts depending on mode
+        if track:
+            my  = cy - 130   # mode buttons
+            dy  = cy - 58    # duration buttons
+            hy  = cy + 36    # HP buttons
+            sy  = cy + 101   # speed buttons
+            ry  = cy + 145   # random-speed toggle
+            sty = cy + 192   # start
+            qy  = cy + 244   # quit
+        else:
+            my  = cy - 44
+            dy  = cy + 30
+            sty = cy + 86
+            qy  = cy + 140
+
         self._menu_btns = [
-            self._btn(cx - 95, cy - 44, 162, 42, "Grid Aim", "mode_grid"),
-            self._btn(cx + 95, cy - 44, 162, 42, "Tracking", "mode_track"),
+            self._btn(cx - 95, my, 162, 42, "Grid Aim", "mode_grid"),
+            self._btn(cx + 95, my, 162, 42, "Tracking", "mode_track"),
         ]
+
         tx0 = cx - (len(TIME_OPTIONS) * 86) / 2 + 43
         for i, lbl in enumerate(TIME_LABELS):
-            b = self._btn(tx0 + i * 86, cy + 30, 72, 34, lbl, f"time_{i}")
+            b = self._btn(tx0 + i * 86, dy, 72, 34, lbl, f"time_{i}")
             b.active = (i == self.time_idx)
             self._menu_btns.append(b)
+
+        if track:
+            # HP buttons
+            hx0 = cx - (len(HP_OPTIONS) * 82) / 2 + 41
+            for i, lbl in enumerate(HP_LABELS):
+                b = self._btn(hx0 + i * 82, hy, 70, 30, lbl, f"hp_{i}")
+                b.active = (i == self.track_hp_idx)
+                self._menu_btns.append(b)
+
+            # speed buttons
+            sx0 = cx - (len(SPD_OPTIONS) * 96) / 2 + 48
+            for i, lbl in enumerate(SPD_LABELS):
+                b = self._btn(sx0 + i * 96, sy, 82, 30, lbl, f"spd_{i}")
+                b.active = (i == self.track_spd_idx)
+                self._menu_btns.append(b)
+
+            # random speed toggle
+            rlbl = "Random Speed: ON" if self.track_random_spd else "Random Speed: OFF"
+            rb = self._btn(cx, ry, 210, 34, rlbl, "toggle_rspd")
+            rb.active = self.track_random_spd
+            self._menu_btns.append(rb)
+
         self._menu_btns += [
-            self._btn(cx, cy + 86,  162, 44, "Start", "start"),
-            self._btn(cx, cy + 140, 110, 34, "Quit",  "quit"),
+            self._btn(cx, sty, 162, 44, "Start", "start"),
+            self._btn(cx, qy,  110, 34, "Quit",  "quit"),
         ]
         self._menu_btns[0].active = (self.mode == "grid")
         self._menu_btns[1].active = (self.mode == "tracking")
@@ -381,6 +457,12 @@ class AimTrainer(QWidget):
             self.mode = "tracking"; self._layout_menu()
         elif tag and tag.startswith("time_"):
             self.time_idx = int(tag[5:]); self._layout_menu()
+        elif tag and tag.startswith("hp_"):
+            self.track_hp_idx = int(tag[3:]); self._layout_menu()
+        elif tag and tag.startswith("spd_"):
+            self.track_spd_idx = int(tag[4:]); self._layout_menu()
+        elif tag == "toggle_rspd":
+            self.track_random_spd = not self.track_random_spd; self._layout_menu()
 
     # ── input ──────────────────────────────────────────────────────────────────
     def mouseMoveEvent(self, ev):
@@ -541,7 +623,7 @@ class AimTrainer(QWidget):
         p.setPen(Qt.NoPen)
         p.setBrush(QBrush(HEALTH_BG))
         p.drawRoundedRect(QRectF(bx, by, bw, bh), 4, 4)
-        pct = max(0.0, self._hp / MAX_HP)
+        pct = max(0.0, self._hp / self._track_max_hp)
         if pct > 0:
             rc = int(220 * (1 - pct) + 40  * pct)
             gc = int(40  * (1 - pct) + 220 * pct)
@@ -642,19 +724,24 @@ class AimTrainer(QWidget):
     def _draw_menu(self, p: QPainter, w, h):
         self._layout_menu()
         cx, cy = w / 2, h / 2
-        pw, ph = 520, 310
+        track = (self.mode == "tracking")
+        pw = 520
+        ph = 540 if track else 310
+
         self._panel(p, cx - pw / 2, cy - ph / 2 - 22, pw, ph + 44)
 
+        # title
         p.setPen(ACCENT)
         p.setFont(QFont("Segoe UI", 26, QFont.Bold))
         p.drawText(QRectF(cx - 220, cy - ph / 2 + 2, 440, 52), Qt.AlignCenter, "Aim Trainer")
 
+        # subtitle
         p.setPen(TEXT_DIM)
         p.setFont(QFont("Segoe UI", 9))
         p.drawText(QRectF(cx - 220, cy - ph / 2 + 50, 440, 22),
                    Qt.AlignCenter, "ESC to quit  •  choose mode and duration")
 
-        # high scores in menu
+        # high scores
         grid_hs  = self._highscores["grid"]
         track_hs = self._highscores["tracking"]
         p.setPen(GOLD)
@@ -663,10 +750,25 @@ class AimTrainer(QWidget):
                    Qt.AlignCenter,
                    f"Best — Grid: {grid_hs}   Tracking: {track_hs}")
 
+        # section labels (positions match _layout_menu y-values minus 26px)
         p.setPen(TEXT_DIM)
         p.setFont(QFont("Segoe UI", 10))
-        p.drawText(QRectF(cx - 220, cy - 66, 440, 22), Qt.AlignCenter, "MODE")
-        p.drawText(QRectF(cx - 220, cy + 8,  440, 22), Qt.AlignCenter, "DURATION")
+        if track:
+            p.drawText(QRectF(cx - 220, cy - 156, 440, 22), Qt.AlignCenter, "MODE")
+            p.drawText(QRectF(cx - 220, cy - 84,  440, 22), Qt.AlignCenter, "DURATION")
+            # tracking settings divider
+            p.setPen(QPen(ACCENT.darker(200), 1))
+            p.drawLine(int(cx - 220), int(cy - 8), int(cx + 220), int(cy - 8))
+            p.setPen(TEXT_DIM)
+            p.setFont(QFont("Segoe UI", 9))
+            p.drawText(QRectF(cx - 220, cy - 6, 440, 18),
+                       Qt.AlignCenter, "TRACKING SETTINGS")
+            p.setFont(QFont("Segoe UI", 10))
+            p.drawText(QRectF(cx - 220, cy + 16, 440, 18), Qt.AlignCenter, "TARGET HP")
+            p.drawText(QRectF(cx - 220, cy + 81, 440, 18), Qt.AlignCenter, "SPEED")
+        else:
+            p.drawText(QRectF(cx - 220, cy - 66, 440, 22), Qt.AlignCenter, "MODE")
+            p.drawText(QRectF(cx - 220, cy + 8,  440, 22), Qt.AlignCenter, "DURATION")
 
         for b in self._menu_btns:
             self._draw_btn(p, b)
