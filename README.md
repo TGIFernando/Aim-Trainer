@@ -189,6 +189,16 @@ A single target moves continuously around the screen, bouncing off edges. Hold y
 - **Score** — number of targets destroyed
 - **Accuracy** — percentage of session time spent actively shooting the target
 
+#### Tracking Settings
+
+Three settings are available from the main menu when Tracking mode is selected. They persist between rounds until you change them.
+
+| Setting | Options | Description |
+|---|---|---|
+| **Target HP** | 50 / 100 / 200 / 300 / 500 | Health the target starts with. Lower HP means faster kills and a faster-paced session. |
+| **Speed** | Slow (80) / Med (150) / Fast (220) / Max (300) | Target movement speed in pixels per second. The target bounces off edges and nudges slightly on each wall hit. |
+| **Random Speed** | OFF / ON | When ON, the target randomly snaps to a new speed (between 35%–100% of the Speed ceiling) every 0.6–2.2 seconds, forcing you to adjust your tracking continuously. |
+
 ---
 
 ## Session Flow

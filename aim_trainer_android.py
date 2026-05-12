@@ -36,10 +36,13 @@ TIME_LABELS  = ['30s', '1 min', '2 min', '3 min', '5 min']
 
 GRID_N   = 3
 ACTIVE_N = 3
-MAX_HP   = 100.0
 DRAIN_PS = 28.0     # HP/sec while holding finger on tracking target
-SPD_MIN  = 80.0
-SPD_MAX  = 220.0
+
+HP_OPTIONS = [50,     100,   200,   300,   500]
+HP_LABELS  = ['50',   '100', '200', '300', '500']
+
+SPD_OPTIONS = [80,     150,   220,    300]
+SPD_LABELS  = ['Slow', 'Med', 'Fast', 'Max']
 
 
 # ── small data classes ─────────────────────────────────────────────────────────
@@ -107,6 +110,10 @@ class GameWidget(Widget):
         self.state    = 'menu'
         self.mode     = 'grid'
         self.time_idx = 1
+        if not hasattr(self, 'track_hp_idx'):
+            self.track_hp_idx     = 1
+            self.track_spd_idx    = 1
+            self.track_random_spd = False
         self._reset_round()
 
     def _reset_round(self):
@@ -122,12 +129,14 @@ class GameWidget(Widget):
         self.active_cells: set  = set()
         self.cell_rects:   list = []
         # tracking
+        self._track_max_hp = float(HP_OPTIONS[self.track_hp_idx])
+        self._spd_timer    = 0.0
         w, h = Window.width, Window.height
         self._tx = w / 2.0
         self._ty = h / 2.0
         self._tvx = random.choice([-1, 1]) * 150.0
         self._tvy = random.choice([-1, 1]) * 120.0
-        self._hp  = MAX_HP
+        self._hp  = self._track_max_hp
         self._on  = False
         self._held_uid:  object = None   # uid of touch currently held on target
         self._touch_pos: dict   = {}     # uid → (x, y) for all live touches
@@ -164,11 +173,24 @@ class GameWidget(Widget):
             self._tvy = -self._tvy
             self._tvx += random.uniform(-18, 18)
 
-        spd = math.hypot(self._tvx, self._tvy)
-        if spd > SPD_MAX:
-            f = SPD_MAX / spd;  self._tvx *= f;  self._tvy *= f
-        elif spd < SPD_MIN:
-            f = SPD_MIN / spd;  self._tvx *= f;  self._tvy *= f
+        if self.track_random_spd:
+            self._spd_timer -= dt
+            if self._spd_timer <= 0:
+                self._spd_timer = random.uniform(0.6, 2.2)
+                top = float(SPD_OPTIONS[self.track_spd_idx])
+                new_spd = random.uniform(top * 0.35, top)
+                spd = math.hypot(self._tvx, self._tvy)
+                if spd > 1:
+                    f = new_spd / spd
+                    self._tvx *= f
+                    self._tvy *= f
+        else:
+            target = float(SPD_OPTIONS[self.track_spd_idx])
+            spd = math.hypot(self._tvx, self._tvy)
+            if spd > 1:
+                f = target / spd
+                self._tvx *= f
+                self._tvy *= f
 
         # check if held touch is still on target
         self._on = False
@@ -183,14 +205,16 @@ class GameWidget(Widget):
                 self.time_on_tgt += dt
                 self._hp -= DRAIN_PS * dt
                 if self._hp <= 0:
-                    self._hp = MAX_HP
+                    self._hp = self._track_max_hp
                     self.score += 1
                     self._rings.append(HitRing(self._tx, self._ty, tr))
                     mg2 = tr * 3
                     self._tx = random.uniform(mg2, w - mg2)
                     self._ty = random.uniform(mg2, h - mg2)
-                    self._tvx = random.choice([-1, 1]) * random.uniform(110, 200)
-                    self._tvy = random.choice([-1, 1]) * random.uniform(90, 160)
+                    spd_t = float(SPD_OPTIONS[self.track_spd_idx])
+                    self._tvx = random.choice([-1, 1]) * random.uniform(spd_t * 0.6, spd_t)
+                    self._tvy = random.choice([-1, 1]) * random.uniform(spd_t * 0.5, spd_t * 0.8)
+                    self._spd_timer = 0.0
 
     # ── sizing (proportional to screen) ───────────────────────────────────────
     def _tr(self):
@@ -213,6 +237,9 @@ class GameWidget(Widget):
             w, h = Window.width, Window.height
             self._tx = random.uniform(mg2, w - mg2)
             self._ty = random.uniform(mg2, h - mg2)
+            spd = float(SPD_OPTIONS[self.track_spd_idx])
+            self._tvx = random.choice([-1, 1]) * spd * 0.8
+            self._tvy = random.choice([-1, 1]) * spd * 0.6
         self.state = 'playing'
 
     def _end_game(self):
@@ -295,16 +322,21 @@ class GameWidget(Widget):
                 return
 
     def _handle_tag(self, tag):
-        if   tag == 'quit':       App.get_running_app().stop()
-        elif tag == 'start':      self._start_game()
-        elif tag == 'again':      self._start_game()
-        elif tag == 'resume':     self.state = 'playing'
-        elif tag == 'pause':      self.state = 'paused'
-        elif tag == 'menu':       self.state = 'menu'
-        elif tag == 'mode_grid':  self.mode = 'grid'
-        elif tag == 'mode_track': self.mode = 'tracking'
+        if   tag == 'quit':         App.get_running_app().stop()
+        elif tag == 'start':        self._start_game()
+        elif tag == 'again':        self._start_game()
+        elif tag == 'resume':       self.state = 'playing'
+        elif tag == 'pause':        self.state = 'paused'
+        elif tag == 'menu':         self.state = 'menu'
+        elif tag == 'mode_grid':    self.mode = 'grid'
+        elif tag == 'mode_track':   self.mode = 'tracking'
+        elif tag == 'toggle_rspd':  self.track_random_spd = not self.track_random_spd
         elif tag and tag.startswith('time_'):
             self.time_idx = int(tag[5:])
+        elif tag and tag.startswith('hp_'):
+            self.track_hp_idx = int(tag[3:])
+        elif tag and tag.startswith('spd_'):
+            self.track_spd_idx = int(tag[4:])
 
     # ── stats ─────────────────────────────────────────────────────────────────
     @property
@@ -410,32 +442,79 @@ class GameWidget(Widget):
         self._text(f'Best  —  Grid: {gs}   Tracking: {ts}',
                    cx, cy + ph / 2 - h * 0.185, size=fs_sub, color=(255, 210, 50))
 
-        # mode row
-        self._text('MODE', cx, cy + h * 0.155, size=fs_lbl, color=(130, 130, 170))
+        tracking = (self.mode == 'tracking')
+
+        # mode row — shift up slightly in tracking mode to make room
+        mode_lbl_y = cy + h * (0.185 if tracking else 0.155)
+        mode_btn_y = cy + h * (0.120 if tracking else 0.090)
+        self._text('MODE', cx, mode_lbl_y, size=fs_lbl, color=(130, 130, 170))
         mbw = pw * 0.42
-        mbh = h * 0.075
-        mby = cy + h * 0.090
-        self._button(cx - mbw - 6, mby, mbw, mbh, 'Grid Aim', 'mode_grid',
+        mbh = h * 0.070
+        self._button(cx - mbw - 6, mode_btn_y, mbw, mbh, 'Grid Aim', 'mode_grid',
                      active=(self.mode == 'grid'))
-        self._button(cx + 6, mby, mbw, mbh, 'Tracking', 'mode_track',
-                     active=(self.mode == 'tracking'))
+        self._button(cx + 6, mode_btn_y, mbw, mbh, 'Tracking', 'mode_track',
+                     active=tracking)
 
         # duration row
-        self._text('DURATION', cx, cy + h * 0.030, size=fs_lbl, color=(130, 130, 170))
+        dur_lbl_y = cy + h * (0.058 if tracking else 0.030)
+        dur_btn_y = cy + h * (0.008 if tracking else -0.015)
+        self._text('DURATION', cx, dur_lbl_y, size=fs_lbl, color=(130, 130, 170))
         tbw = (pw - 10) / len(TIME_OPTIONS) - 7
-        tbh = h * 0.062
+        tbh = h * 0.058
         tx0 = cx - pw / 2 + 5
         for i, lbl in enumerate(TIME_LABELS):
             bx = tx0 + i * (tbw + 7)
-            by = cy - h * 0.015
-            self._button(bx, by, tbw, tbh, lbl, f'time_{i}',
+            self._button(bx, dur_btn_y, tbw, tbh, lbl, f'time_{i}',
                          active=(i == self.time_idx))
 
+        if tracking:
+            # ── tracking settings ───────────────────────────────────────────
+            self._col(90, 160, 255, 0.20)
+            Line(points=[cx - pw * 0.42, cy - h * 0.048,
+                         cx + pw * 0.42, cy - h * 0.048], width=1)
+            self._text('TRACKING SETTINGS', cx, cy - h * 0.060,
+                       size=int(h * 0.022), color=(90, 160, 255))
+
+            # HP row
+            self._text('TARGET HP', cx, cy - h * 0.098,
+                       size=fs_lbl, color=(130, 130, 170))
+            hpbw = (pw - 10) / len(HP_OPTIONS) - 6
+            hpbh = h * 0.052
+            hp0  = cx - pw / 2 + 5
+            for i, lbl in enumerate(HP_LABELS):
+                bx = hp0 + i * (hpbw + 6)
+                self._button(bx, cy - h * 0.148, hpbw, hpbh, lbl, f'hp_{i}',
+                             active=(i == self.track_hp_idx))
+
+            # speed row
+            self._text('SPEED', cx, cy - h * 0.200,
+                       size=fs_lbl, color=(130, 130, 170))
+            spdbw = (pw - 10) / len(SPD_OPTIONS) - 7
+            spdbh = h * 0.052
+            spd0  = cx - pw / 2 + 5
+            for i, lbl in enumerate(SPD_LABELS):
+                bx = spd0 + i * (spdbw + 7)
+                self._button(bx, cy - h * 0.250, spdbw, spdbh, lbl, f'spd_{i}',
+                             active=(i == self.track_spd_idx))
+
+            # random speed toggle
+            rspd_lbl = 'Random Speed: ON' if self.track_random_spd else 'Random Speed: OFF'
+            rbw = pw * 0.55
+            rbh = h * 0.052
+            self._button(cx - rbw / 2, cy - h * 0.315, rbw, rbh,
+                         rspd_lbl, 'toggle_rspd', active=self.track_random_spd)
+
+            start_y = cy - h * 0.398
+            quit_y  = cy - h * 0.468
+        else:
+            start_y = cy - h * 0.130
+            quit_y  = cy - h * 0.225
+
         abw = pw * 0.50
-        abh = h * 0.075
-        self._button(cx - abw / 2, cy - h * 0.130, abw, abh, 'Start', 'start')
+        abh = h * 0.070
+        self._button(cx - abw / 2, start_y, abw, abh, 'Start', 'start')
         qw = pw * 0.30
-        self._button(cx - qw / 2,  cy - h * 0.225, qw,  h * 0.060, 'Quit', 'quit')
+        self._button(cx - qw / 2, quit_y, qw, h * 0.055, 'Quit', 'quit')
 
     # ── playing screen ────────────────────────────────────────────────────────
     def _draw_game(self, w, h):
@@ -468,7 +547,7 @@ class GameWidget(Widget):
         # health bar
         self._col(12, 12, 40, 0.90)
         RoundedRectangle(pos=(bx, by), size=(bw, bh), radius=[4])
-        pct = max(0.0, self._hp / MAX_HP)
+        pct = max(0.0, self._hp / self._track_max_hp)
         if pct > 0:
             rc = int(220 * (1 - pct) + 40  * pct)
             gc = int(40  * (1 - pct) + 220 * pct)
