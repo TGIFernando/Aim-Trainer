@@ -4,6 +4,8 @@
 import sys
 import random
 import math
+import json
+import os
 import time as _time
 
 from PyQt5.QtWidgets import QApplication, QWidget
@@ -21,20 +23,23 @@ TEXT_DIM   = QColor(130, 130, 170)
 BTN_NORMAL = QColor(28, 32, 68, 210)
 BTN_HOVER  = QColor(52, 58, 120, 230)
 BTN_ACTIVE = QColor(68, 92, 210, 240)
-HEALTH_BG  = QColor(40, 12, 12, 210)
+HEALTH_BG  = QColor(12, 12, 40, 210)
+GOLD       = QColor(255, 210, 50)
 
 # ── constants ──────────────────────────────────────────────────────────────────
 TIME_OPTIONS = [30, 60, 120, 180, 300]
 TIME_LABELS  = ["30s", "1 min", "2 min", "3 min", "5 min"]
 
-GRID_N    = 3        # 3×3 grid
-ACTIVE_N  = 3        # targets active at once
-GRID_R    = 30       # grid target radius (px)
-TRACK_R   = 38       # tracking target radius (px)
-DRAIN_PS  = 24.0     # HP per second while cursor is on tracking target
+GRID_N    = 3
+ACTIVE_N  = 3
+GRID_R    = 30
+TRACK_R   = 38
+DRAIN_PS  = 24.0     # HP per second while holding click on tracking target
 MAX_HP    = 100.0
 SPD_MIN   = 100.0
 SPD_MAX   = 280.0
+
+SCORES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "highscores.json")
 
 
 # ── tiny data classes ──────────────────────────────────────────────────────────
@@ -69,10 +74,12 @@ class AimTrainer(QWidget):
     def __init__(self):
         super().__init__()
         self._setup_window()
+        self._highscores = self._load_scores()
+        self._new_hs     = False
         self._init_vars()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(16)          # ~60 fps
+        self._timer.start(16)
         self._last_t = _time.monotonic()
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -81,31 +88,32 @@ class AimTrainer(QWidget):
         self.setWindowFlags(
             Qt.FramelessWindowHint |
             Qt.WindowStaysOnTopHint |
-            Qt.Tool                     # keeps it off the taskbar
+            Qt.Tool
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         scr = QApplication.primaryScreen().geometry()
         self.setGeometry(scr)
 
     def _init_vars(self):
-        # ── ui state
-        self.state    = "menu"     # menu | playing | paused | gameover
-        self.mode     = "grid"     # grid | tracking
-        self.time_idx = 1          # index into TIME_OPTIONS
+        self.state    = "menu"
+        self.mode     = "grid"
+        self.time_idx = 1
 
-        # ── game vars (reset each round)
-        self.score          = 0
-        self.shots          = 0    # grid: total clicks
-        self.hits           = 0    # grid: clicks that hit
-        self.time_on_tgt    = 0.0  # tracking: seconds cursor on target
-        self.elapsed        = 0.0  # tracking: total seconds played
-        self.time_left      = float(TIME_OPTIONS[self.time_idx])
+        self.score       = 0
+        self.shots       = 0
+        self.hits        = 0
+        self.time_on_tgt = 0.0
+        self.elapsed     = 0.0
+        self.time_left   = float(TIME_OPTIONS[self.time_idx])
 
-        # ── grid
-        self.active_cells: set   = set()
-        self.cell_rects: list    = []
+        # timer waits for first input before counting down
+        self._waiting    = True
 
-        # ── tracking
+        # grid
+        self.active_cells: set  = set()
+        self.cell_rects: list   = []
+
+        # tracking
         w = self.width()  or 1920
         h = self.height() or 1080
         self._tx  = float(w) / 2
@@ -113,18 +121,36 @@ class AimTrainer(QWidget):
         self._tvx = random.choice([-1, 1]) * 160.0
         self._tvy = random.choice([-1, 1]) * 130.0
         self._hp  = MAX_HP
-        self._on  = False          # cursor currently on tracking target?
+        self._on  = False
+        self._mouse_held = False   # must hold LMB to deal damage in tracking
 
-        # ── visual
+        # visual
         self._rings: list = []
-        self._mx   = 0
-        self._my   = 0
+        self._mx = 0
+        self._my = 0
 
-        # ── button groups (populated in layout helpers)
-        self._menu_btns : list = []
-        self._pause_btns: list = []
-        self._go_btns   : list = []
-        self._pause_btn : Button = Button(QRectF(0, 0, 82, 34), "Pause", "pause")
+        # buttons
+        self._menu_btns : list   = []
+        self._pause_btns: list   = []
+        self._go_btns   : list   = []
+        self._pause_btn : Button = Button(QRectF(0, 0, 84, 34), "Pause", "pause")
+
+    # ── high score persistence ─────────────────────────────────────────────────
+    def _load_scores(self) -> dict:
+        try:
+            with open(SCORES_FILE) as f:
+                data = json.load(f)
+            return {"grid": int(data.get("grid", 0)),
+                    "tracking": int(data.get("tracking", 0))}
+        except Exception:
+            return {"grid": 0, "tracking": 0}
+
+    def _save_scores(self):
+        try:
+            with open(SCORES_FILE, "w") as f:
+                json.dump(self._highscores, f)
+        except Exception:
+            pass
 
     # ── game loop ──────────────────────────────────────────────────────────────
     def _tick(self):
@@ -133,11 +159,13 @@ class AimTrainer(QWidget):
         self._last_t = now
 
         if self.state == "playing":
-            self.time_left -= dt
-            if self.time_left <= 0:
-                self.time_left = 0.0
-                self._end_game()
-                return
+            if not self._waiting:
+                self.time_left -= dt
+                if self.time_left <= 0:
+                    self.time_left = 0.0
+                    self._end_game()
+                    return
+            # target always moves so player can see it before starting
             if self.mode == "tracking":
                 self._tick_tracking(dt)
 
@@ -145,9 +173,8 @@ class AimTrainer(QWidget):
         self.update()
 
     def _tick_tracking(self, dt: float):
-        self.elapsed += dt
         w, h = self.width(), self.height()
-        mg = TRACK_R + 12
+        mg   = TRACK_R + 12
 
         self._tx = max(mg, min(w - mg, self._tx + self._tvx * dt))
         self._ty = max(mg, min(h - mg, self._ty + self._tvy * dt))
@@ -159,28 +186,30 @@ class AimTrainer(QWidget):
             self._tvy = -self._tvy
             self._tvx += random.uniform(-20, 20)
 
-        # clamp speed
         spd = math.hypot(self._tvx, self._tvy)
         if spd > SPD_MAX:
             f = SPD_MAX / spd;  self._tvx *= f;  self._tvy *= f
         elif spd < SPD_MIN:
             f = SPD_MIN / spd;  self._tvx *= f;  self._tvy *= f
 
-        # cursor test
-        dist = math.hypot(self._mx - self._tx, self._my - self._ty)
+        dist     = math.hypot(self._mx - self._tx, self._my - self._ty)
         self._on = dist < TRACK_R
-        if self._on:
-            self.time_on_tgt += dt
-            self._hp -= DRAIN_PS * dt
-            if self._hp <= 0:
-                self._hp = MAX_HP
-                self.score += 1
-                self._rings.append(HitRing(self._tx, self._ty, TRACK_R))
-                mg2 = TRACK_R * 3
-                self._tx = random.uniform(mg2, w - mg2)
-                self._ty = random.uniform(mg2, h - mg2)
-                self._tvx = random.choice([-1, 1]) * random.uniform(130, 230)
-                self._tvy = random.choice([-1, 1]) * random.uniform(100, 190)
+
+        # damage + accuracy only after player starts (holds click)
+        if not self._waiting:
+            self.elapsed += dt
+            if self._on and self._mouse_held:
+                self.time_on_tgt += dt
+                self._hp -= DRAIN_PS * dt
+                if self._hp <= 0:
+                    self._hp = MAX_HP
+                    self.score += 1
+                    self._rings.append(HitRing(self._tx, self._ty, TRACK_R))
+                    mg2 = TRACK_R * 3
+                    self._tx = random.uniform(mg2, w - mg2)
+                    self._ty = random.uniform(mg2, h - mg2)
+                    self._tvx = random.choice([-1, 1]) * random.uniform(130, 230)
+                    self._tvy = random.choice([-1, 1]) * random.uniform(100, 190)
 
     # ── game flow ──────────────────────────────────────────────────────────────
     def _start_game(self):
@@ -191,7 +220,11 @@ class AimTrainer(QWidget):
         self.time_on_tgt = 0.0
         self.elapsed     = 0.0
         self.time_left   = float(TIME_OPTIONS[self.time_idx])
+        self._waiting    = True
+        self._mouse_held = False
+        self._new_hs     = False
         self._rings.clear()
+
         if self.mode == "grid":
             self._build_grid()
         else:
@@ -202,9 +235,14 @@ class AimTrainer(QWidget):
             self._tvy = random.choice([-1, 1]) * 130.0
             self._hp  = MAX_HP
             self._on  = False
+
         self.state = "playing"
 
     def _end_game(self):
+        if self.score > 0 and self.score >= self._highscores[self.mode]:
+            self._new_hs = True
+            self._highscores[self.mode] = self.score
+            self._save_scores()
         self._layout_go()
         self.state = "gameover"
 
@@ -223,11 +261,14 @@ class AimTrainer(QWidget):
         self.active_cells = set(random.sample(range(GRID_N * GRID_N), ACTIVE_N))
 
     def _grid_click(self, px: int, py: int):
+        # first click starts the timer regardless of whether it's a hit
+        if self._waiting:
+            self._waiting = False
         self.shots += 1
         for idx in list(self.active_cells):
             rect = self.cell_rects[idx]
-            cx = rect.x() + rect.width()  / 2
-            cy = rect.y() + rect.height() / 2
+            cx   = rect.x() + rect.width()  / 2
+            cy   = rect.y() + rect.height() / 2
             if math.hypot(px - cx, py - cy) < GRID_R:
                 self.hits  += 1
                 self.score += 1
@@ -274,16 +315,16 @@ class AimTrainer(QWidget):
     def _layout_go(self):
         cx, cy = self.width() / 2, self.height() / 2
         self._go_btns = [
-            self._btn(cx, cy + 90,  162, 44, "Play Again", "again"),
-            self._btn(cx, cy + 144, 162, 44, "Main Menu",  "menu"),
-            self._btn(cx, cy + 198, 110, 34, "Quit",       "quit"),
+            self._btn(cx, cy + 100, 162, 44, "Play Again", "again"),
+            self._btn(cx, cy + 154, 162, 44, "Main Menu",  "menu"),
+            self._btn(cx, cy + 208, 110, 34, "Quit",       "quit"),
         ]
 
     def _active_buttons(self) -> list:
-        if self.state == "menu":      return self._menu_btns
-        if self.state == "paused":    return self._pause_btns
-        if self.state == "gameover":  return self._go_btns
-        if self.state == "playing":   return [self._pause_btn]
+        if self.state == "menu":     return self._menu_btns
+        if self.state == "paused":   return self._pause_btns
+        if self.state == "gameover": return self._go_btns
+        if self.state == "playing":  return [self._pause_btn]
         return []
 
     def _handle_button(self, tag: str):
@@ -314,12 +355,23 @@ class AimTrainer(QWidget):
         if ev.button() != Qt.LeftButton:
             return
         px, py = ev.x(), ev.y()
+
         for b in self._active_buttons():
             if b.rect.contains(px, py):
                 self._handle_button(b.tag)
                 return
-        if self.state == "playing" and self.mode == "grid":
-            self._grid_click(px, py)
+
+        if self.state == "playing":
+            if self.mode == "grid":
+                self._grid_click(px, py)
+            elif self.mode == "tracking":
+                self._mouse_held = True
+                if self._waiting:
+                    self._waiting = False   # first hold starts the timer
+
+    def mouseReleaseEvent(self, ev):
+        if ev.button() == Qt.LeftButton:
+            self._mouse_held = False
 
     def keyPressEvent(self, ev):
         k = ev.key()
@@ -385,9 +437,9 @@ class AimTrainer(QWidget):
 
     def _draw_target(self, p: QPainter, cx, cy, r):
         grad = QRadialGradient(cx - r * 0.22, cy - r * 0.22, r * 1.2)
-        grad.setColorAt(0.0, QColor(255, 105, 105))
-        grad.setColorAt(0.42, QColor(210, 22, 22))
-        grad.setColorAt(1.0,  QColor(110, 0, 0))
+        grad.setColorAt(0.0, QColor(120, 190, 255))
+        grad.setColorAt(0.42, QColor(30, 100, 220))
+        grad.setColorAt(1.0,  QColor(5, 30, 120))
         p.setPen(Qt.NoPen)
         p.setBrush(QBrush(grad))
         p.drawEllipse(QPointF(cx, cy), r, r)
@@ -402,7 +454,7 @@ class AimTrainer(QWidget):
         for ring in self._rings:
             alpha = int(ring.life * 210)
             scale = 1 + (1 - ring.life) * 1.8
-            p.setPen(QPen(QColor(110, 255, 110, alpha), 2))
+            p.setPen(QPen(QColor(100, 200, 255, alpha), 2))
             p.drawEllipse(QPointF(ring.x, ring.y),
                           ring.base_r * scale, ring.base_r * scale)
 
@@ -414,6 +466,8 @@ class AimTrainer(QWidget):
             self._draw_tracking_mode(p)
         self._draw_rings(p)
         self._draw_hud(p, w, h)
+        if self._waiting:
+            self._draw_start_prompt(p, w, h)
 
     def _draw_grid_mode(self, p: QPainter):
         p.setPen(QPen(QColor(255, 255, 255, 14), 1))
@@ -428,41 +482,57 @@ class AimTrainer(QWidget):
 
     def _draw_tracking_mode(self, p: QPainter):
         tx, ty = self._tx, self._ty
-        # health bar
         bw, bh = 120, 11
         bx, by = tx - bw / 2, ty + TRACK_R + 12
+
         p.setPen(Qt.NoPen)
         p.setBrush(QBrush(HEALTH_BG))
         p.drawRoundedRect(QRectF(bx, by, bw, bh), 4, 4)
         pct = max(0.0, self._hp / MAX_HP)
         if pct > 0:
-            # green (full) → red (empty)
             rc = int(220 * (1 - pct) + 40  * pct)
             gc = int(40  * (1 - pct) + 220 * pct)
             p.setBrush(QBrush(QColor(rc, gc, 40)))
             p.drawRoundedRect(QRectF(bx, by, bw * pct, bh), 4, 4)
-        # glow ring while on target
-        if self._on:
+
+        # glow only when actively holding and on target
+        if self._on and self._mouse_held:
             p.setBrush(Qt.NoBrush)
-            p.setPen(QPen(QColor(255, 215, 55, 110), 5))
+            p.setPen(QPen(QColor(120, 200, 255, 120), 5))
             p.drawEllipse(QPointF(tx, ty), TRACK_R + 6, TRACK_R + 6)
+
         self._draw_target(p, tx, ty, TRACK_R)
 
     def _draw_hud(self, p: QPainter, w, h):
-        self._panel(p, 10, 10, 360, 46, 8)
+        hs = self._highscores[self.mode]
+        self._panel(p, 10, 10, 430, 46, 8)
         p.setPen(TEXT_FG)
         p.setFont(QFont("Segoe UI", 11))
         mode_lbl = "Grid Aim" if self.mode == "grid" else "Tracking"
         hud = (f"Score: {self.score}    "
+               f"Best: {hs}    "
                f"Acc: {self.accuracy:.0f}%    "
                f"{self.time_str}    "
                f"[{mode_lbl}]")
-        p.drawText(QRectF(18, 22, 340, 24), Qt.AlignLeft | Qt.AlignVCenter, hud)
-        # pause button
+        p.drawText(QRectF(18, 22, 408, 24), Qt.AlignLeft | Qt.AlignVCenter, hud)
+
         br = QRectF(w - 98, 10, 84, 34)
         self._pause_btn.rect    = br
         self._pause_btn.hovered = br.contains(self._mx, self._my)
         self._draw_btn(p, self._pause_btn)
+
+    def _draw_start_prompt(self, p: QPainter, w, h):
+        cx, cy = w / 2, h / 2
+        if self.mode == "grid":
+            msg = "Click any target to start"
+        else:
+            msg = "Hold left click on the target to start"
+        pw, ph = 380, 48
+        self._panel(p, cx - pw / 2, cy - ph / 2 + 140, pw, ph, 10)
+        p.setPen(ACCENT)
+        p.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        p.drawText(QRectF(cx - pw / 2, cy - ph / 2 + 140, pw, ph),
+                   Qt.AlignCenter, msg)
 
     # ── overlays ──────────────────────────────────────────────────────────────
     def _draw_pause_overlay(self, p: QPainter, w, h):
@@ -480,25 +550,37 @@ class AimTrainer(QWidget):
 
     def _draw_gameover(self, p: QPainter, w, h):
         cx, cy = w / 2, h / 2
-        self._panel(p, cx - 180, cy - 135, 360, 390, 14)
+        self._panel(p, cx - 185, cy - 148, 370, 420, 14)
+
         p.setPen(ACCENT)
         p.setFont(QFont("Segoe UI", 22, QFont.Bold))
-        p.drawText(QRectF(cx - 160, cy - 124, 320, 44), Qt.AlignCenter, "Time's Up!")
+        p.drawText(QRectF(cx - 165, cy - 138, 330, 44), Qt.AlignCenter, "Time's Up!")
 
-        secs = TIME_OPTIONS[self.time_idx]
+        # new high score banner
+        if self._new_hs:
+            p.setPen(GOLD)
+            p.setFont(QFont("Segoe UI", 12, QFont.Bold))
+            p.drawText(QRectF(cx - 165, cy - 88, 330, 28), Qt.AlignCenter,
+                       "New High Score!")
+
+        secs  = TIME_OPTIONS[self.time_idx]
+        hs    = self._highscores[self.mode]
         stats = [
-            ("Score",    str(self.score)),
-            ("Accuracy", f"{self.accuracy:.1f}%"),
-            ("Duration", f"{secs // 60}:{secs % 60:02d}"),
-            ("Mode",     "Grid Aim" if self.mode == "grid" else "Tracking"),
+            ("Score",      str(self.score)),
+            ("Best",       str(hs)),
+            ("Accuracy",   f"{self.accuracy:.1f}%"),
+            ("Duration",   f"{secs // 60}:{secs % 60:02d}"),
+            ("Mode",       "Grid Aim" if self.mode == "grid" else "Tracking"),
         ]
         p.setFont(QFont("Segoe UI", 13))
+        y_start = cy - 56 if self._new_hs else cy - 68
         for i, (lbl, val) in enumerate(stats):
-            y = cy - 68 + i * 36
-            p.setPen(TEXT_DIM)
-            p.drawText(QRectF(cx - 160, y, 140, 30), Qt.AlignRight | Qt.AlignVCenter, lbl)
-            p.setPen(TEXT_FG)
-            p.drawText(QRectF(cx + 22,  y, 140, 30), Qt.AlignLeft  | Qt.AlignVCenter, val)
+            y = y_start + i * 34
+            # highlight the score row gold if new high score
+            p.setPen(GOLD if (lbl == "Best" and self._new_hs) else TEXT_DIM)
+            p.drawText(QRectF(cx - 165, y, 140, 28), Qt.AlignRight | Qt.AlignVCenter, lbl)
+            p.setPen(GOLD if (lbl in ("Score", "Best") and self._new_hs) else TEXT_FG)
+            p.drawText(QRectF(cx + 28,  y, 140, 28), Qt.AlignLeft  | Qt.AlignVCenter, val)
 
         for b in self._go_btns:
             self._draw_btn(p, b)
@@ -518,6 +600,15 @@ class AimTrainer(QWidget):
         p.setFont(QFont("Segoe UI", 9))
         p.drawText(QRectF(cx - 220, cy - ph / 2 + 50, 440, 22),
                    Qt.AlignCenter, "ESC to quit  •  choose mode and duration")
+
+        # high scores in menu
+        grid_hs  = self._highscores["grid"]
+        track_hs = self._highscores["tracking"]
+        p.setPen(GOLD)
+        p.setFont(QFont("Segoe UI", 9))
+        p.drawText(QRectF(cx - 220, cy - ph / 2 + 70, 440, 20),
+                   Qt.AlignCenter,
+                   f"Best — Grid: {grid_hs}   Tracking: {track_hs}")
 
         p.setPen(TEXT_DIM)
         p.setFont(QFont("Segoe UI", 10))
