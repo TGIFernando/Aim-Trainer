@@ -67,6 +67,39 @@ class HitRing:
         return self.life > 0
 
 
+class BreakEffect:
+    """Shards that fly outward when a grid target is hit."""
+    __slots__ = ("cx", "cy", "r", "life", "shards")
+
+    def __init__(self, cx: float, cy: float, r: float):
+        self.cx, self.cy = cx, cy
+        self.r    = r
+        self.life = 1.0
+        # 8 shards at evenly-spaced angles with slight random jitter
+        self.shards = [
+            {
+                "x":  cx + math.cos(a) * r * 0.3,
+                "y":  cy + math.sin(a) * r * 0.3,
+                "vx": math.cos(a) * r * random.uniform(5.0, 8.5),
+                "vy": math.sin(a) * r * random.uniform(5.0, 8.5),
+                "sz": r * random.uniform(0.18, 0.34),
+            }
+            for a in (
+                i * math.pi / 4 + random.uniform(-0.18, 0.18)
+                for i in range(8)
+            )
+        ]
+
+    def tick(self, dt: float) -> bool:
+        self.life -= dt * 3.2     # ~0.31 s total
+        for s in self.shards:
+            s["x"] += s["vx"] * dt
+            s["y"] += s["vy"] * dt
+            s["vx"] *= 0.78       # friction — shards decelerate quickly
+            s["vy"] *= 0.78
+        return self.life > 0
+
+
 # ── main widget ────────────────────────────────────────────────────────────────
 class AimTrainer(QWidget):
 
@@ -125,7 +158,8 @@ class AimTrainer(QWidget):
         self._mouse_held = False   # must hold LMB to deal damage in tracking
 
         # visual
-        self._rings: list = []
+        self._rings:  list = []
+        self._breaks: list = []
         self._mx = 0
         self._my = 0
 
@@ -169,7 +203,8 @@ class AimTrainer(QWidget):
             if self.mode == "tracking":
                 self._tick_tracking(dt)
 
-        self._rings = [r for r in self._rings if r.tick(dt)]
+        self._rings  = [r for r in self._rings  if r.tick(dt)]
+        self._breaks = [b for b in self._breaks if b.tick(dt)]
         self.update()
 
     def _tick_tracking(self, dt: float):
@@ -224,6 +259,7 @@ class AimTrainer(QWidget):
         self._mouse_held = False
         self._new_hs     = False
         self._rings.clear()
+        self._breaks.clear()
 
         if self.mode == "grid":
             self._build_grid()
@@ -273,6 +309,7 @@ class AimTrainer(QWidget):
                 self.hits  += 1
                 self.score += 1
                 self._rings.append(HitRing(cx, cy, GRID_R))
+                self._breaks.append(BreakEffect(cx, cy, GRID_R))
                 self.active_cells.remove(idx)
                 self._spawn_cell()
                 return
@@ -458,6 +495,21 @@ class AimTrainer(QWidget):
             p.drawEllipse(QPointF(ring.x, ring.y),
                           ring.base_r * scale, ring.base_r * scale)
 
+    def _draw_breaks(self, p: QPainter):
+        p.setPen(Qt.NoPen)
+        for fx in self._breaks:
+            # center impact flash — bright white-blue, quadratic fade so it
+            # feels like a sharp hit rather than a slow fade
+            flash_a = int(fx.life * fx.life * 220)
+            p.setBrush(QBrush(QColor(190, 220, 255, flash_a)))
+            p.drawEllipse(QPointF(fx.cx, fx.cy), fx.r * 0.9, fx.r * 0.9)
+            # shards — shrink and fade as they fly outward
+            for s in fx.shards:
+                sz    = max(1.0, s["sz"] * fx.life)
+                alpha = int(fx.life * 240)
+                p.setBrush(QBrush(QColor(70, 150, 255, alpha)))
+                p.drawEllipse(QPointF(s["x"], s["y"]), sz, sz)
+
     # ── game screen ───────────────────────────────────────────────────────────
     def _draw_game(self, p: QPainter, w, h):
         if self.mode == "grid":
@@ -465,6 +517,7 @@ class AimTrainer(QWidget):
         else:
             self._draw_tracking_mode(p)
         self._draw_rings(p)
+        self._draw_breaks(p)
         self._draw_hud(p, w, h)
         if self._waiting:
             self._draw_start_prompt(p, w, h)
