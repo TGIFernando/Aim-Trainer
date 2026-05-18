@@ -54,21 +54,9 @@ jobs:
             "build-tools;33.0.2" \
             "ndk;25.1.8937393"
 
-          # Patch buildozer.spec: insert sdk/ndk paths into [app] section
-          # (appending would land in [buildozer] section and be ignored)
-          python3 << 'PYEOF'
-import os
-sdk = os.environ['ANDROID_HOME']
-ndk = sdk + '/ndk/25.1.8937393'
-with open('buildozer.spec') as f:
-    content = f.read()
-patch = 'android.sdk_path = {}\nandroid.ndk_path = {}\n\n'.format(sdk, ndk)
-content = content.replace('[buildozer]', patch + '[buildozer]')
-with open('buildozer.spec', 'w') as f:
-    f.write(content)
-print('SDK:', sdk)
-print('NDK:', ndk)
-PYEOF
+          # Insert sdk/ndk paths into [app] section (before [buildozer])
+          # Using sed to avoid << heredoc syntax issues in YAML
+          sed -i "s|^\[buildozer\]|android.sdk_path = ${ANDROID_HOME}\nandroid.ndk_path = ${ANDROID_HOME}/ndk/25.1.8937393\n\n[buildozer]|" buildozer.spec
 
       - name: Build APK
         run: buildozer -v android debug 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
