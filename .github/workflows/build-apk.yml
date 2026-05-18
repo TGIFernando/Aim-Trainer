@@ -66,8 +66,22 @@ jobs:
             ln -s "$SDK/ndk/25.1.8937393" "$NDK_DEST"
           fi
 
+      - name: Verify Android environment
+        run: |
+          echo "=== NDK ==="
+          ls -la "$HOME/.buildozer/android/platform/" 2>/dev/null || echo "platform dir missing"
+          echo "=== SDK ==="
+          ls "$HOME/.buildozer/android/platform/android-sdk/" 2>/dev/null || echo "SDK missing"
+
       - name: Build APK
-        run: buildozer -v android debug
+        run: buildozer -v android debug 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
