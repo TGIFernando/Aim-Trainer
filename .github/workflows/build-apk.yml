@@ -42,7 +42,7 @@ jobs:
       - name: Install buildozer
         # Pin p4a to mid-2024: latest p4a builds Python 3.14 which breaks kivy 2.3.0
         # (kivy 2.3.0 requires cython<=3.0.0 which can't compile against Python 3.14)
-        run: pip install --upgrade cython virtualenv buildozer "python-for-android==2024.01.21"
+        run: pip install --upgrade cython virtualenv buildozer "python-for-android==2023.09.16"
 
       - name: Set up Android SDK and NDK
         run: |

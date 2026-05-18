@@ -10,7 +10,7 @@ version = 1.0
 # Entry point
 source.main = aim_trainer_android.py
 
-requirements = python3,kivy==2.3.0,pillow
+requirements = python3,kivy==2.2.1,pillow
 
 # Orientation: landscape works best for this game.
 # Change to portrait or all if preferred.
