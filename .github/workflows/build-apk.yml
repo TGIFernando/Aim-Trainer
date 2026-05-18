@@ -53,11 +53,18 @@ jobs:
           # Accept all licenses (writes hash files into $SDK/licenses/)
           yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses 2>/dev/null || true
 
-          # Pre-install SDK components buildozer/p4a will need
+          # Pre-install SDK components + NDK r25b that buildozer/p4a will need
           "$SDKMANAGER" --sdk_root="$SDK" \
             "platform-tools" \
             "platforms;android-33" \
-            "build-tools;33.0.2"
+            "build-tools;33.0.2" \
+            "ndk;25.1.8937393"
+
+          # Symlink NDK to the path buildozer expects
+          NDK_DEST="$HOME/.buildozer/android/platform/android-ndk-r25b"
+          if [ ! -e "$NDK_DEST" ]; then
+            ln -s "$SDK/ndk/25.1.8937393" "$NDK_DEST"
+          fi
 
       - name: Build APK
         run: buildozer -v android debug
