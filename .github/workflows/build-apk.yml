@@ -54,8 +54,12 @@ jobs:
             "build-tools;33.0.2" \
             "ndk;25.1.8937393"
 
+          # p4a looks for sdkmanager at the old tools/bin path — create a shim
+          mkdir -p "$ANDROID_HOME/tools/bin"
+          ln -sf "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+                 "$ANDROID_HOME/tools/bin/sdkmanager"
+
           # Insert sdk/ndk paths into [app] section (before [buildozer])
-          # Using sed to avoid << heredoc syntax issues in YAML
           sed -i "s|^\[buildozer\]|android.sdk_path = ${ANDROID_HOME}\nandroid.ndk_path = ${ANDROID_HOME}/ndk/25.1.8937393\n\n[buildozer]|" buildozer.spec
 
       - name: Build APK
