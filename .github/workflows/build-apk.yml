@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Cache buildozer directory
+      - name: Cache buildozer
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
@@ -36,16 +36,26 @@ jobs:
       - name: Install buildozer
         run: pip install --upgrade buildozer cython virtualenv
 
-      - name: Pre-accept Android SDK licenses
+      - name: Bootstrap Android SDK
         run: |
-          DIR="$HOME/.buildozer/android/platform/android-sdk/licenses"
-          mkdir -p "$DIR"
-          printf '\n24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e\n' > "$DIR/android-sdk-license"
-          printf '\n84831b9409646a918e30573bab4c9c91346d8abd\n'                                        > "$DIR/android-sdk-preview-license"
-          printf '\n33b6ADu2A1BfD0CK7mCeNxoR87RLezVA6IwGUNY=\n'                                       > "$DIR/android-googletv-license"
-          printf '\n8933bad161af4178b1185d1a37fbf41ea5269c55\n'                                        > "$DIR/google-gdk-license"
-          printf '\nd975f751698a77b662f1254ddbeed3901e976f5a\n'                                        > "$DIR/intel-android-extra-license"
-          printf '\ne9acab5b5fbb560a72cfaecce8946896ff6aab9d\n'                                        > "$DIR/mips-android-sysimage-license"
+          SDK="$HOME/.buildozer/android/platform/android-sdk"
+          mkdir -p "$SDK/cmdline-tools"
+
+          # Re-use the runner's pre-installed cmdline-tools (avoids downloading)
+          ln -sf "$ANDROID_HOME/cmdline-tools/latest" "$SDK/cmdline-tools/latest"
+
+          # Compatibility shim — older p4a/buildozer looks here
+          mkdir -p "$SDK/tools/bin"
+          ln -sf "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$SDK/tools/bin/sdkmanager"
+
+          # Accept all licenses (writes hash files into $SDK/licenses/)
+          yes | sdkmanager --sdk_root="$SDK" --licenses 2>/dev/null || true
+
+          # Pre-install SDK components buildozer/p4a will need
+          sdkmanager --sdk_root="$SDK" \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;33.0.2"
 
       - name: Build APK
         run: buildozer -v android debug
