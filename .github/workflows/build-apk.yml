@@ -12,6 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Cache buildozer directory
         uses: actions/cache@v4
         with:
@@ -19,11 +24,31 @@ jobs:
           key: buildozer-${{ hashFiles('buildozer.spec') }}
           restore-keys: buildozer-
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            python3-pip python3-dev git zip unzip \
+            openjdk-17-jdk autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev \
+            cmake libffi-dev libssl-dev
+
+      - name: Install buildozer
+        run: pip install --upgrade buildozer cython virtualenv
+
+      - name: Pre-accept Android SDK licenses
+        run: |
+          DIR="$HOME/.buildozer/android/platform/android-sdk/licenses"
+          mkdir -p "$DIR"
+          printf '\n24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e\n' > "$DIR/android-sdk-license"
+          printf '\n84831b9409646a918e30573bab4c9c91346d8abd\n'                                        > "$DIR/android-sdk-preview-license"
+          printf '\n33b6ADu2A1BfD0CK7mCeNxoR87RLezVA6IwGUNY=\n'                                       > "$DIR/android-googletv-license"
+          printf '\n8933bad161af4178b1185d1a37fbf41ea5269c55\n'                                        > "$DIR/google-gdk-license"
+          printf '\nd975f751698a77b662f1254ddbeed3901e976f5a\n'                                        > "$DIR/intel-android-extra-license"
+          printf '\ne9acab5b5fbb560a72cfaecce8946896ff6aab9d\n'                                        > "$DIR/mips-android-sysimage-license"
+
       - name: Build APK
-        uses: ArtemSBulgakov/buildozer-action@v1
-        with:
-          command: buildozer android debug
-          buildozer_version: stable
+        run: buildozer -v android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
