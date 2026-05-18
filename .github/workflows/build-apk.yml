@@ -48,11 +48,13 @@ jobs:
           mkdir -p "$SDK/tools/bin"
           ln -sf "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$SDK/tools/bin/sdkmanager"
 
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
           # Accept all licenses (writes hash files into $SDK/licenses/)
-          yes | sdkmanager --sdk_root="$SDK" --licenses 2>/dev/null || true
+          yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses 2>/dev/null || true
 
           # Pre-install SDK components buildozer/p4a will need
-          sdkmanager --sdk_root="$SDK" \
+          "$SDKMANAGER" --sdk_root="$SDK" \
             "platform-tools" \
             "platforms;android-33" \
             "build-tools;33.0.2"
