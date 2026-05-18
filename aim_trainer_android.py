@@ -41,7 +41,7 @@ DRAIN_PS = 28.0     # HP/sec while holding finger on tracking target
 HP_OPTIONS = [10,     25,   50,   75,   100]
 HP_LABELS  = ['10',   '25', '50', '75', '100']
 
-SPD_OPTIONS = [80,     150,   220,    300]
+SPD_OPTIONS = [220,    300,   380,    460]
 SPD_LABELS  = ['Slow', 'Med', 'Fast', 'Max']
 
 
@@ -122,6 +122,7 @@ class GameWidget(Widget):
         self.hits        = 0
         self.time_on_tgt = 0.0
         self.elapsed_t   = 0.0
+        self._held_time  = 0.0
         self.time_left   = float(TIME_OPTIONS[self.time_idx])
         self._waiting    = True
         self._rings:     list = []
@@ -193,17 +194,22 @@ class GameWidget(Widget):
                 self._tvy *= f
 
         # check if held touch is still on target
-        self._on = False
+        self._on    = False
+        dist_to_tgt = tr  # fallback to edge distance
         if self._held_uid is not None:
             pos = self._touch_pos.get(self._held_uid)
             if pos:
-                self._on = math.hypot(pos[0] - self._tx, pos[1] - self._ty) < tr
+                dist_to_tgt = math.hypot(pos[0] - self._tx, pos[1] - self._ty)
+                self._on = dist_to_tgt < tr
 
         if not self._waiting:
             self.elapsed_t += dt
+            if self._held_uid is not None:
+                self._held_time += dt
             if self._on:
                 self.time_on_tgt += dt
-                self._hp -= DRAIN_PS * dt
+                mult = 3.5 - 2.5 * (dist_to_tgt / tr)   # 3.5× at center, 1× at edge
+                self._hp -= DRAIN_PS * mult * dt
                 if self._hp <= 0:
                     self._hp = self._track_max_hp
                     self.score += 1
@@ -343,7 +349,7 @@ class GameWidget(Widget):
     def accuracy(self):
         if self.mode == 'grid':
             return (self.hits / self.shots * 100) if self.shots else 0.0
-        return (self.time_on_tgt / self.elapsed_t * 100) if self.elapsed_t else 0.0
+        return (self.time_on_tgt / self._held_time * 100) if self._held_time else 0.0
 
     @property
     def time_str(self):
