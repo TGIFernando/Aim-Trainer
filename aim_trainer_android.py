@@ -38,8 +38,8 @@ GRID_N   = 3
 ACTIVE_N = 3
 DRAIN_PS = 28.0     # HP/sec while holding finger on tracking target
 
-HP_OPTIONS = [50,     100,   200,   300,   500]
-HP_LABELS  = ['50',   '100', '200', '300', '500']
+HP_OPTIONS = [10,     25,   50,   75,   100]
+HP_LABELS  = ['10',   '25', '50', '75', '100']
 
 SPD_OPTIONS = [80,     150,   220,    300]
 SPD_LABELS  = ['Slow', 'Med', 'Fast', 'Max']

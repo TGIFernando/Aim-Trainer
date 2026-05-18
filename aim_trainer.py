@@ -30,9 +30,7 @@ GOLD       = QColor(255, 210, 50)
 TIME_OPTIONS = [30, 60, 120, 180, 300]
 TIME_LABELS  = ["30s", "1 min", "2 min", "3 min", "5 min"]
 
-GRID_N    = 3
 ACTIVE_N  = 3
-GRID_R    = 30
 TRACK_R   = 38
 DRAIN_PS  = 24.0     # HP per second while holding click on tracking target
 MAX_HP    = 100.0
@@ -41,11 +39,26 @@ SPD_MAX   = 280.0
 
 SCORES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "highscores.json")
 
-HP_OPTIONS  = [50, 100, 200, 300, 500]
-HP_LABELS   = ["50", "100", "200", "300", "500"]
+HP_OPTIONS = [10,     25,   50,   75,   100]
+HP_LABELS  = ['10',   '25', '50', '75', '100']
 
 SPD_OPTIONS = [80, 150, 220, 300]
 SPD_LABELS  = ["Slow", "Med", "Fast", "Max"]
+
+# grid settings
+GRID_N_OPTIONS   = [2, 3, 4, 5]
+GRID_N_LABELS    = ["2×2", "3×3", "4×4", "5×5"]
+
+GRID_R_OPTIONS   = [14, 22, 30, 42]
+GRID_R_LABELS    = ["Tiny", "Small", "Med", "Large"]
+
+GRID_GAP_OPTIONS = [0.35, 0.50, 0.65, 0.80]  # multiplier of base grid area
+GRID_GAP_LABELS  = ["Tight", "Normal", "Wide", "Max"]
+
+# AimLabs Gridshot preset — matched from screenshot reference
+# Cell size ~13% of screen height (~140px on 1080p); radius ~46% of cell (~65px)
+AIMLABS_CELL_FACTOR  = 0.13   # center-to-center spacing per cell
+AIMLABS_R_CELL_RATIO = 0.46   # target radius as fraction of cell size
 
 
 # ── tiny data classes ──────────────────────────────────────────────────────────
@@ -81,7 +94,6 @@ class BreakEffect:
         self.cx, self.cy = cx, cy
         self.r    = r
         self.life = 1.0
-        # 8 shards at evenly-spaced angles with slight random jitter
         self.shards = [
             {
                 "x":  cx + math.cos(a) * r * 0.3,
@@ -97,11 +109,11 @@ class BreakEffect:
         ]
 
     def tick(self, dt: float) -> bool:
-        self.life -= dt * 3.2     # ~0.31 s total
+        self.life -= dt * 3.2
         for s in self.shards:
             s["x"] += s["vx"] * dt
             s["y"] += s["vy"] * dt
-            s["vx"] *= 0.78       # friction — shards decelerate quickly
+            s["vx"] *= 0.78
             s["vy"] *= 0.78
         return self.life > 0
 
@@ -145,7 +157,6 @@ class AimTrainer(QWidget):
         self.elapsed     = 0.0
         self.time_left   = float(TIME_OPTIONS[self.time_idx])
 
-        # timer waits for first input before counting down
         self._waiting    = True
 
         # grid
@@ -161,13 +172,21 @@ class AimTrainer(QWidget):
         self._tvy = random.choice([-1, 1]) * 130.0
         self._hp  = MAX_HP
         self._on  = False
-        self._mouse_held = False   # must hold LMB to deal damage in tracking
+        self._mouse_held = False
 
-        # tracking settings (persist between rounds — only set once in _init_vars)
+        # tracking settings (persist between rounds)
         if not hasattr(self, 'track_hp_idx'):
-            self.track_hp_idx     = 1      # default 100 HP
-            self.track_spd_idx    = 1      # default Med (150 px/s)
+            self.track_hp_idx     = 1
+            self.track_spd_idx    = 1
             self.track_random_spd = False
+
+        # grid settings (persist between rounds)
+        if not hasattr(self, 'grid_n_idx'):
+            self.grid_n_idx   = 1   # default 3×3
+            self.grid_r_idx   = 2   # default Med (30px)
+            self.grid_gap_idx = 1   # default Normal
+        if not hasattr(self, 'aimlabs_preset'):
+            self.aimlabs_preset = False
 
         # per-round tracking state
         self._track_max_hp = float(HP_OPTIONS[self.track_hp_idx])
@@ -184,6 +203,18 @@ class AimTrainer(QWidget):
         self._pause_btns: list   = []
         self._go_btns   : list   = []
         self._pause_btn : Button = Button(QRectF(0, 0, 84, 34), "Pause", "pause")
+
+    # ── grid setting helpers ───────────────────────────────────────────────────
+    @property
+    def _grid_n(self) -> int:
+        return GRID_N_OPTIONS[self.grid_n_idx]
+
+    @property
+    def _grid_r(self) -> float:
+        if self.aimlabs_preset:
+            h = self.height() or 1080
+            return h * AIMLABS_CELL_FACTOR * AIMLABS_R_CELL_RATIO
+        return float(GRID_R_OPTIONS[self.grid_r_idx])
 
     # ── high score persistence ─────────────────────────────────────────────────
     def _load_scores(self) -> dict:
@@ -215,7 +246,6 @@ class AimTrainer(QWidget):
                     self.time_left = 0.0
                     self._end_game()
                     return
-            # target always moves so player can see it before starting
             if self.mode == "tracking":
                 self._tick_tracking(dt)
 
@@ -238,7 +268,6 @@ class AimTrainer(QWidget):
             self._tvx += random.uniform(-20, 20)
 
         if self.track_random_spd:
-            # periodically snap to a new random speed between 35-100% of selected max
             self._spd_timer -= dt
             if self._spd_timer <= 0:
                 self._spd_timer = random.uniform(0.6, 2.2)
@@ -250,7 +279,6 @@ class AimTrainer(QWidget):
                     self._tvx *= f
                     self._tvy *= f
         else:
-            # hold exactly at the selected constant speed
             target = float(SPD_OPTIONS[self.track_spd_idx])
             spd = math.hypot(self._tvx, self._tvy)
             if spd > 1:
@@ -261,7 +289,6 @@ class AimTrainer(QWidget):
         dist     = math.hypot(self._mx - self._tx, self._my - self._ty)
         self._on = dist < TRACK_R
 
-        # damage + accuracy only after player starts (holds click)
         if not self._waiting:
             self.elapsed += dt
             if self._on and self._mouse_held:
@@ -298,7 +325,6 @@ class AimTrainer(QWidget):
             mg = TRACK_R * 3
             self._tx = random.uniform(mg, w - mg)
             self._ty = random.uniform(mg, h - mg)
-            # initialise speed from settings
             self._track_max_hp = float(HP_OPTIONS[self.track_hp_idx])
             self._spd_timer    = 0.0
             spd   = float(SPD_OPTIONS[self.track_spd_idx])
@@ -321,37 +347,47 @@ class AimTrainer(QWidget):
     # ── grid helpers ──────────────────────────────────────────────────────────
     def _build_grid(self):
         w, h = self.width(), self.height()
-        gw = min(w * 0.52, 540.0)
-        gh = min(h * 0.52, 440.0)
-        ox = (w - gw) / 2
-        oy = (h - gh) / 2
-        cw, ch = gw / GRID_N, gh / GRID_N
+        n    = self._grid_n
+        if self.aimlabs_preset:
+            cs = h * AIMLABS_CELL_FACTOR
+            gs = cs * n
+        else:
+            gap = GRID_GAP_OPTIONS[self.grid_gap_idx]
+            gs  = min(w * 0.52 * gap, w * 0.94, h * 0.52 * gap, h * 0.90)
+            cs  = gs / n
+        ox = (w - gs) / 2
+        oy = (h - gs) / 2
         self.cell_rects = [
-            QRectF(ox + c * cw, oy + r * ch, cw, ch)
-            for r in range(GRID_N) for c in range(GRID_N)
+            QRectF(ox + c * cs, oy + r * cs, cs, cs)
+            for r in range(n) for c in range(n)
         ]
-        self.active_cells = set(random.sample(range(GRID_N * GRID_N), ACTIVE_N))
+        total = n * n
+        count = min(ACTIVE_N, total)
+        self.active_cells = set(random.sample(range(total), count))
 
     def _grid_click(self, px: int, py: int):
-        # first click starts the timer regardless of whether it's a hit
         if self._waiting:
             self._waiting = False
         self.shots += 1
+        r = self._grid_r
         for idx in list(self.active_cells):
             rect = self.cell_rects[idx]
             cx   = rect.x() + rect.width()  / 2
             cy   = rect.y() + rect.height() / 2
-            if math.hypot(px - cx, py - cy) < GRID_R:
+            if math.hypot(px - cx, py - cy) < r:
                 self.hits  += 1
                 self.score += 1
-                self._rings.append(HitRing(cx, cy, GRID_R))
-                self._breaks.append(BreakEffect(cx, cy, GRID_R))
+                self._rings.append(HitRing(cx, cy, r))
+                self._breaks.append(BreakEffect(cx, cy, r))
                 self.active_cells.remove(idx)
-                self._spawn_cell()
+                self._spawn_cell(last_hit=idx)
                 return
 
-    def _spawn_cell(self):
-        pool = set(range(GRID_N * GRID_N)) - self.active_cells
+    def _spawn_cell(self, last_hit: int = None):
+        total = self._grid_n * self._grid_n
+        pool  = set(range(total)) - self.active_cells
+        if last_hit is not None:
+            pool.discard(last_hit)   # never immediately respawn on the hit cell
         if pool:
             self.active_cells.add(random.choice(list(pool)))
 
@@ -363,20 +399,23 @@ class AimTrainer(QWidget):
         cx, cy = self.width() / 2, self.height() / 2
         track = (self.mode == "tracking")
 
-        # button y-centres — two layouts depending on mode
         if track:
-            my  = cy - 130   # mode buttons
-            dy  = cy - 58    # duration buttons
-            hy  = cy + 36    # HP buttons
-            sy  = cy + 101   # speed buttons
-            ry  = cy + 145   # random-speed toggle
-            sty = cy + 192   # start
-            qy  = cy + 244   # quit
+            my  = cy - 130
+            dy  = cy - 58
+            hy  = cy + 50
+            sy  = cy + 110
+            ry  = cy + 162
+            sty = cy + 210
+            qy  = cy + 256
         else:
-            my  = cy - 44
-            dy  = cy + 30
-            sty = cy + 86
-            qy  = cy + 140
+            my  = cy - 130
+            dy  = cy - 58
+            gsy = cy + 50    # grid size
+            tsy = cy + 108   # target size
+            spy = cy + 166   # spacing
+            aly = cy + 224   # AimLabs preset
+            sty = cy + 265
+            qy  = cy + 305
 
         self._menu_btns = [
             self._btn(cx - 95, my, 162, 42, "Grid Aim", "mode_grid"),
@@ -390,25 +429,48 @@ class AimTrainer(QWidget):
             self._menu_btns.append(b)
 
         if track:
-            # HP buttons
             hx0 = cx - (len(HP_OPTIONS) * 82) / 2 + 41
             for i, lbl in enumerate(HP_LABELS):
                 b = self._btn(hx0 + i * 82, hy, 70, 30, lbl, f"hp_{i}")
                 b.active = (i == self.track_hp_idx)
                 self._menu_btns.append(b)
 
-            # speed buttons
             sx0 = cx - (len(SPD_OPTIONS) * 96) / 2 + 48
             for i, lbl in enumerate(SPD_LABELS):
                 b = self._btn(sx0 + i * 96, sy, 82, 30, lbl, f"spd_{i}")
                 b.active = (i == self.track_spd_idx)
                 self._menu_btns.append(b)
 
-            # random speed toggle
             rlbl = "Random Speed: ON" if self.track_random_spd else "Random Speed: OFF"
             rb = self._btn(cx, ry, 210, 34, rlbl, "toggle_rspd")
             rb.active = self.track_random_spd
             self._menu_btns.append(rb)
+        else:
+            # grid size
+            gnx0 = cx - (len(GRID_N_OPTIONS) * 96) / 2 + 48
+            for i, lbl in enumerate(GRID_N_LABELS):
+                b = self._btn(gnx0 + i * 96, gsy, 82, 30, lbl, f"gridn_{i}")
+                b.active = (i == self.grid_n_idx)
+                self._menu_btns.append(b)
+
+            # target size
+            grx0 = cx - (len(GRID_R_OPTIONS) * 96) / 2 + 48
+            for i, lbl in enumerate(GRID_R_LABELS):
+                b = self._btn(grx0 + i * 96, tsy, 82, 30, lbl, f"gridr_{i}")
+                b.active = (i == self.grid_r_idx)
+                self._menu_btns.append(b)
+
+            # spacing
+            gpx0 = cx - (len(GRID_GAP_OPTIONS) * 96) / 2 + 48
+            for i, lbl in enumerate(GRID_GAP_LABELS):
+                b = self._btn(gpx0 + i * 96, spy, 82, 30, lbl, f"gridgap_{i}")
+                b.active = (i == self.grid_gap_idx)
+                self._menu_btns.append(b)
+
+            # AimLabs preset
+            al_btn = self._btn(cx, aly, 162, 34, "AimLabs", "aimlabs_preset")
+            al_btn.active = self.aimlabs_preset
+            self._menu_btns.append(al_btn)
 
         self._menu_btns += [
             self._btn(cx, sty, 162, 44, "Start", "start"),
@@ -463,6 +525,23 @@ class AimTrainer(QWidget):
             self.track_spd_idx = int(tag[4:]); self._layout_menu()
         elif tag == "toggle_rspd":
             self.track_random_spd = not self.track_random_spd; self._layout_menu()
+        elif tag == "aimlabs_preset":
+            self.aimlabs_preset = not self.aimlabs_preset
+            if self.aimlabs_preset:
+                self.grid_n_idx = 1
+            self._layout_menu()
+        elif tag and tag.startswith("gridn_"):
+            self.grid_n_idx = int(tag[6:])
+            self.aimlabs_preset = False
+            self._layout_menu()
+        elif tag and tag.startswith("gridr_"):
+            self.grid_r_idx = int(tag[6:])
+            self.aimlabs_preset = False
+            self._layout_menu()
+        elif tag and tag.startswith("gridgap_"):
+            self.grid_gap_idx = int(tag[8:])
+            self.aimlabs_preset = False
+            self._layout_menu()
 
     # ── input ──────────────────────────────────────────────────────────────────
     def mouseMoveEvent(self, ev):
@@ -486,7 +565,7 @@ class AimTrainer(QWidget):
             elif self.mode == "tracking":
                 self._mouse_held = True
                 if self._waiting:
-                    self._waiting = False   # first hold starts the timer
+                    self._waiting = False
 
     def mouseReleaseEvent(self, ev):
         if ev.button() == Qt.LeftButton:
@@ -580,12 +659,9 @@ class AimTrainer(QWidget):
     def _draw_breaks(self, p: QPainter):
         p.setPen(Qt.NoPen)
         for fx in self._breaks:
-            # center impact flash — bright white-blue, quadratic fade so it
-            # feels like a sharp hit rather than a slow fade
             flash_a = int(fx.life * fx.life * 220)
             p.setBrush(QBrush(QColor(190, 220, 255, flash_a)))
             p.drawEllipse(QPointF(fx.cx, fx.cy), fx.r * 0.9, fx.r * 0.9)
-            # shards — shrink and fade as they fly outward
             for s in fx.shards:
                 sz    = max(1.0, s["sz"] * fx.life)
                 alpha = int(fx.life * 240)
@@ -609,11 +685,12 @@ class AimTrainer(QWidget):
         p.setBrush(Qt.NoBrush)
         for rect in self.cell_rects:
             p.drawRect(rect)
+        r = self._grid_r
         for idx in self.active_cells:
             rect = self.cell_rects[idx]
             cx   = rect.x() + rect.width()  / 2
             cy   = rect.y() + rect.height() / 2
-            self._draw_target(p, cx, cy, GRID_R)
+            self._draw_target(p, cx, cy, r)
 
     def _draw_tracking_mode(self, p: QPainter):
         tx, ty = self._tx, self._ty
@@ -630,7 +707,6 @@ class AimTrainer(QWidget):
             p.setBrush(QBrush(QColor(rc, gc, 40)))
             p.drawRoundedRect(QRectF(bx, by, bw * pct, bh), 4, 4)
 
-        # glow only when actively holding and on target
         if self._on and self._mouse_held:
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(QColor(120, 200, 255, 120), 5))
@@ -691,7 +767,6 @@ class AimTrainer(QWidget):
         p.setFont(QFont("Segoe UI", 22, QFont.Bold))
         p.drawText(QRectF(cx - 165, cy - 138, 330, 44), Qt.AlignCenter, "Time's Up!")
 
-        # new high score banner
         if self._new_hs:
             p.setPen(GOLD)
             p.setFont(QFont("Segoe UI", 12, QFont.Bold))
@@ -711,7 +786,6 @@ class AimTrainer(QWidget):
         y_start = cy - 56 if self._new_hs else cy - 68
         for i, (lbl, val) in enumerate(stats):
             y = y_start + i * 34
-            # highlight the score row gold if new high score
             p.setPen(GOLD if (lbl == "Best" and self._new_hs) else TEXT_DIM)
             p.drawText(QRectF(cx - 165, y, 140, 28), Qt.AlignRight | Qt.AlignVCenter, lbl)
             p.setPen(GOLD if (lbl in ("Score", "Best") and self._new_hs) else TEXT_FG)
@@ -726,22 +800,28 @@ class AimTrainer(QWidget):
         cx, cy = w / 2, h / 2
         track = (self.mode == "tracking")
         pw = 520
-        ph = 540 if track else 310
+        ph = 610 if not track else 540
 
         self._panel(p, cx - pw / 2, cy - ph / 2 - 22, pw, ph + 44)
 
-        # title
+        # separator line
+        p.setPen(QPen(ACCENT.darker(200), 1))
+        p.drawLine(int(cx - 220), int(cy - 8), int(cx + 220), int(cy - 8))
+
+        # buttons drawn before text so labels always render on top
+        for b in self._menu_btns:
+            self._draw_btn(p, b)
+
+        # title and subtitle (top of panel, drawn last so always visible)
         p.setPen(ACCENT)
         p.setFont(QFont("Segoe UI", 26, QFont.Bold))
         p.drawText(QRectF(cx - 220, cy - ph / 2 + 2, 440, 52), Qt.AlignCenter, "Aim Trainer")
 
-        # subtitle
         p.setPen(TEXT_DIM)
         p.setFont(QFont("Segoe UI", 9))
         p.drawText(QRectF(cx - 220, cy - ph / 2 + 50, 440, 22),
                    Qt.AlignCenter, "ESC to quit  •  choose mode and duration")
 
-        # high scores
         grid_hs  = self._highscores["grid"]
         track_hs = self._highscores["tracking"]
         p.setPen(GOLD)
@@ -750,28 +830,25 @@ class AimTrainer(QWidget):
                    Qt.AlignCenter,
                    f"Best — Grid: {grid_hs}   Tracking: {track_hs}")
 
-        # section labels (positions match _layout_menu y-values minus 26px)
+        # section labels — positioned in the clear gaps between button rows
         p.setPen(TEXT_DIM)
         p.setFont(QFont("Segoe UI", 10))
-        if track:
-            p.drawText(QRectF(cx - 220, cy - 156, 440, 22), Qt.AlignCenter, "MODE")
-            p.drawText(QRectF(cx - 220, cy - 84,  440, 22), Qt.AlignCenter, "DURATION")
-            # tracking settings divider
-            p.setPen(QPen(ACCENT.darker(200), 1))
-            p.drawLine(int(cx - 220), int(cy - 8), int(cx + 220), int(cy - 8))
-            p.setPen(TEXT_DIM)
-            p.setFont(QFont("Segoe UI", 9))
-            p.drawText(QRectF(cx - 220, cy - 6, 440, 18),
-                       Qt.AlignCenter, "TRACKING SETTINGS")
-            p.setFont(QFont("Segoe UI", 10))
-            p.drawText(QRectF(cx - 220, cy + 16, 440, 18), Qt.AlignCenter, "TARGET HP")
-            p.drawText(QRectF(cx - 220, cy + 81, 440, 18), Qt.AlignCenter, "SPEED")
-        else:
-            p.drawText(QRectF(cx - 220, cy - 66, 440, 22), Qt.AlignCenter, "MODE")
-            p.drawText(QRectF(cx - 220, cy + 8,  440, 22), Qt.AlignCenter, "DURATION")
+        p.drawText(QRectF(cx - 220, cy - 175, 440, 18), Qt.AlignCenter, "MODE")
+        p.drawText(QRectF(cx - 220, cy - 106, 440, 18), Qt.AlignCenter, "DURATION")
 
-        for b in self._menu_btns:
-            self._draw_btn(p, b)
+        p.setFont(QFont("Segoe UI", 9))
+        p.drawText(QRectF(cx - 220, cy - 6, 440, 18),
+                   Qt.AlignCenter, "TRACKING SETTINGS" if track else "GRID SETTINGS")
+
+        p.setFont(QFont("Segoe UI", 10))
+        if track:
+            p.drawText(QRectF(cx - 220, cy + 14, 440, 18), Qt.AlignCenter, "TARGET HP")
+            p.drawText(QRectF(cx - 220, cy + 70, 440, 18), Qt.AlignCenter, "SPEED")
+        else:
+            p.drawText(QRectF(cx - 220, cy + 14,  440, 18), Qt.AlignCenter, "GRID SIZE")
+            p.drawText(QRectF(cx - 220, cy + 70,  440, 18), Qt.AlignCenter, "TARGET SIZE")
+            p.drawText(QRectF(cx - 220, cy + 128, 440, 18), Qt.AlignCenter, "SPACING")
+            p.drawText(QRectF(cx - 220, cy + 186, 440, 18), Qt.AlignCenter, "PRESET")
 
 
 # ── entry point ────────────────────────────────────────────────────────────────
