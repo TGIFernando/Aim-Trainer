@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Cache buildozer
+      - name: Cache buildozer build artifacts
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
@@ -36,42 +36,23 @@ jobs:
       - name: Install buildozer
         run: pip install --upgrade buildozer cython virtualenv
 
-      - name: Bootstrap Android SDK
+      - name: Set up Android SDK and NDK
         run: |
-          SDK="$HOME/.buildozer/android/platform/android-sdk"
-          mkdir -p "$SDK/cmdline-tools"
-
-          # Re-use the runner's pre-installed cmdline-tools (avoids downloading)
-          ln -sf "$ANDROID_HOME/cmdline-tools/latest" "$SDK/cmdline-tools/latest"
-
-          # Compatibility shim — older p4a/buildozer looks here
-          mkdir -p "$SDK/tools/bin"
-          ln -sf "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$SDK/tools/bin/sdkmanager"
-
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
 
-          # Accept all licenses (writes hash files into $SDK/licenses/)
-          yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses 2>/dev/null || true
+          # Accept all licenses
+          yes | "$SDKMANAGER" --licenses 2>/dev/null || true
 
-          # Pre-install SDK components + NDK r25b that buildozer/p4a will need
-          "$SDKMANAGER" --sdk_root="$SDK" \
+          # Install required packages directly into the runner's ANDROID_HOME
+          "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-33" \
             "build-tools;33.0.2" \
             "ndk;25.1.8937393"
 
-          # Symlink NDK to the path buildozer expects
-          NDK_DEST="$HOME/.buildozer/android/platform/android-ndk-r25b"
-          if [ ! -e "$NDK_DEST" ]; then
-            ln -s "$SDK/ndk/25.1.8937393" "$NDK_DEST"
-          fi
-
-      - name: Verify Android environment
-        run: |
-          echo "=== NDK ==="
-          ls -la "$HOME/.buildozer/android/platform/" 2>/dev/null || echo "platform dir missing"
-          echo "=== SDK ==="
-          ls "$HOME/.buildozer/android/platform/android-sdk/" 2>/dev/null || echo "SDK missing"
+          # Point buildozer at the runner's SDK and the NDK we just installed
+          printf '\nandroid.sdk_path = %s\nandroid.ndk_path = %s/ndk/25.1.8937393\n' \
+            "$ANDROID_HOME" "$ANDROID_HOME" >> buildozer.spec
 
       - name: Build APK
         run: buildozer -v android debug 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
