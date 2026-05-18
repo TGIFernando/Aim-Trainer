@@ -12,11 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
       - name: Cache buildozer directory
         uses: actions/cache@v4
         with:
@@ -24,20 +19,11 @@ jobs:
           key: buildozer-${{ hashFiles('buildozer.spec') }}
           restore-keys: buildozer-
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            python3-pip python3-dev git zip unzip \
-            openjdk-17-jdk autoconf libtool pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev \
-            cmake libffi-dev libssl-dev
-
-      - name: Install buildozer
-        run: pip install --upgrade buildozer cython virtualenv
-
       - name: Build APK
-        run: buildozer -v android debug
+        uses: ArtemSBulgakov/buildozer-action@v1
+        with:
+          command: buildozer android debug
+          buildozer_version: stable
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
