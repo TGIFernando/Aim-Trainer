@@ -21,8 +21,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
-          key: buildozer-${{ hashFiles('buildozer.spec') }}
-          restore-keys: buildozer-
+          key: buildozer-v2-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-v2-
+
+      - name: Cache Android NDK r25b
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/android/sdk/ndk/25.1.8937393
+          key: android-ndk-25.1.8937393
 
       - name: Install system dependencies
         run: |
@@ -40,19 +46,29 @@ jobs:
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
 
-          # Accept all licenses
           yes | "$SDKMANAGER" --licenses 2>/dev/null || true
 
-          # Install required packages directly into the runner's ANDROID_HOME
           "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-33" \
             "build-tools;33.0.2" \
             "ndk;25.1.8937393"
 
-          # Point buildozer at the runner's SDK and the NDK we just installed
-          printf '\nandroid.sdk_path = %s\nandroid.ndk_path = %s/ndk/25.1.8937393\n' \
-            "$ANDROID_HOME" "$ANDROID_HOME" >> buildozer.spec
+          # Patch buildozer.spec: insert sdk/ndk paths into [app] section
+          # (appending would land in [buildozer] section and be ignored)
+          python3 << 'PYEOF'
+import os
+sdk = os.environ['ANDROID_HOME']
+ndk = sdk + '/ndk/25.1.8937393'
+with open('buildozer.spec') as f:
+    content = f.read()
+patch = 'android.sdk_path = {}\nandroid.ndk_path = {}\n\n'.format(sdk, ndk)
+content = content.replace('[buildozer]', patch + '[buildozer]')
+with open('buildozer.spec', 'w') as f:
+    f.write(content)
+print('SDK:', sdk)
+print('NDK:', ndk)
+PYEOF
 
       - name: Build APK
         run: buildozer -v android debug 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
