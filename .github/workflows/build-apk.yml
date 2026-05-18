@@ -21,8 +21,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
-          key: buildozer-v2-${{ hashFiles('buildozer.spec') }}
-          restore-keys: buildozer-v2-
+          key: buildozer-v3-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-v3-
 
       - name: Cache Android NDK r25b
         uses: actions/cache@v4
@@ -40,9 +40,10 @@ jobs:
             cmake libffi-dev libssl-dev
 
       - name: Install buildozer
-        # Pin p4a to mid-2024: latest p4a builds Python 3.14 which breaks kivy 2.3.0
-        # (kivy 2.3.0 requires cython<=3.0.0 which can't compile against Python 3.14)
-        run: pip install --upgrade cython virtualenv buildozer "python-for-android==2023.09.16"
+        # kivy 2.2.1 caps Cython at <=0.29.33 and rejects Cython 3.x.
+        # p4a 2023.09.16 builds Python 3.11 for Android (avoids 3.14 breakage) and
+        # uses setup.py kivy build path (kivy 2.3.0's pyproject.toml breaks cross-compile).
+        run: pip install "cython==0.29.33" virtualenv buildozer "python-for-android==2023.09.16"
 
       - name: Set up Android SDK and NDK
         run: |
