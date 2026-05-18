@@ -42,7 +42,7 @@ SCORES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "highscor
 HP_OPTIONS = [10,     25,   50,   75,   100]
 HP_LABELS  = ['10',   '25', '50', '75', '100']
 
-SPD_OPTIONS = [80, 150, 220, 300]
+SPD_OPTIONS = [220, 300, 380, 460]
 SPD_LABELS  = ["Slow", "Med", "Fast", "Max"]
 
 # grid settings
@@ -155,6 +155,7 @@ class AimTrainer(QWidget):
         self.hits        = 0
         self.time_on_tgt = 0.0
         self.elapsed     = 0.0
+        self._held_time  = 0.0
         self.time_left   = float(TIME_OPTIONS[self.time_idx])
 
         self._waiting    = True
@@ -291,9 +292,12 @@ class AimTrainer(QWidget):
 
         if not self._waiting:
             self.elapsed += dt
+            if self._mouse_held:
+                self._held_time += dt
             if self._on and self._mouse_held:
                 self.time_on_tgt += dt
-                self._hp -= DRAIN_PS * dt
+                mult = 3.5 - 2.5 * (dist / TRACK_R)   # 3.5× at center, 1× at edge
+                self._hp -= DRAIN_PS * mult * dt
                 if self._hp <= 0:
                     self._hp = self._track_max_hp
                     self.score += 1
@@ -312,6 +316,7 @@ class AimTrainer(QWidget):
         self.hits        = 0
         self.time_on_tgt = 0.0
         self.elapsed     = 0.0
+        self._held_time  = 0.0
         self.time_left   = float(TIME_OPTIONS[self.time_idx])
         self._waiting    = True
         self._mouse_held = False
@@ -588,7 +593,7 @@ class AimTrainer(QWidget):
         if self.mode == "grid":
             return (self.hits / self.shots * 100) if self.shots else 0.0
         else:
-            return (self.time_on_tgt / self.elapsed * 100) if self.elapsed else 0.0
+            return (self.time_on_tgt / self._held_time * 100) if self._held_time else 0.0
 
     @property
     def time_str(self) -> str:
