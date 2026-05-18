@@ -17,6 +17,18 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Pin system python3/pip3 to Python 3.11
+        # p4a creates internal build virtualenvs by calling the system `python3`.
+        # On this runner the system python3 is now Python 3.14, which removed the
+        # `cgi` module that Cython 0.29.33 needs. Redirect the system symlinks so
+        # every subprocess (including p4a's venv creation) picks up Python 3.11.
+        run: |
+          PYTHON311="$(which python)"
+          sudo ln -sf "$PYTHON311" /usr/local/bin/python3
+          sudo ln -sf "$PYTHON311" /usr/bin/python3
+          sudo ln -sf "$(which pip)" /usr/local/bin/pip3
+          sudo ln -sf "$(which pip)" /usr/bin/pip3
+
       - name: Cache buildozer build artifacts
         uses: actions/cache@v4
         with:
